@@ -1,0 +1,200 @@
+---
+title: "CODAP Quarto Bridge — Step 1 Test"
+format:
+  html:
+    self-contained: false
+    page-layout: full
+    echo: false
+---
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     LAYOUT
+     Left column: CODAP iframe (with hidden bridge plugin embedded)
+     Right column: OJS reactive output + status log
+     ═══════════════════════════════════════════════════════════════════════ -->
+
+:::: {.columns}
+
+::: {.column width="60%"}
+
+### CODAP
+
+```{=html}
+<!--
+  CODAP v3 local dev server.
+  The bridge plugin is embedded via the `di=` query param.
+  Adjust the plugin URL if your local server uses a different port.
+
+  URL breakdown:
+    http://localhost:8081/static/dg/en/cert/index.html  — CODAP v3 app
+    ?di=http://localhost:8080                           — hidden bridge plugin
+-->
+<iframe
+  id="codap-iframe"
+  src="http://localhost:8081/?doc=http://localhost:8080/test-doc.codap&di=http://localhost:8080"
+  width="100%"
+  height="600"
+  style="border: 1px solid #ccc; border-radius: 6px;"
+  allow="clipboard-read; clipboard-write"
+></iframe>
+```
+
+:::
+
+::: {.column width="40%"}
+
+### Bridge Status
+
+```{ojs}
+//| label: bridge-status-display
+
+// Reactively display whatever the bridge status cell produces
+html`<div style="
+  font-family: monospace;
+  font-size: 13px;
+  background: #f4f4f4;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 12px;
+  min-height: 80px;
+  white-space: pre-wrap;
+">${bridgeStatusText}</div>`
+```
+
+### Component List (Round-Trip Result)
+
+```{ojs}
+//| label: component-list-display
+
+html`<pre style="
+  font-size: 12px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 6px;
+  padding: 12px;
+  overflow: auto;
+  max-height: 300px;
+">${componentListText}</pre>`
+```
+
+### Live CODAP Events
+
+```{ojs}
+//| label: event-log-display
+
+html`<div style="
+  font-family: monospace;
+  font-size: 11px;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: 6px;
+  padding: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+">${eventLogText}</div>`
+```
+
+:::
+
+::::
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     OJS CELLS — Bridge initialization and reactive state
+     ═══════════════════════════════════════════════════════════════════════ -->
+
+```{ojs}
+//| label: bridge-init
+//| output: false
+
+// ── Import the host-side bridge library ──────────────────────────────────────
+// Served from the same local static server as the plugin (port 8080).
+// Adjust path if you move codap-quarto-bridge.js elsewhere.
+CodapBridgeModule = import("http://localhost:8080/codap-quarto-bridge.js")
+```
+
+```{ojs}
+//| label: bridge-connect
+//| output: false
+
+// ── Mutable reactive state cells ─────────────────────────────────────────────
+// OJS doesn't have useState, so we use mutable() for values that change
+// after the initial render.
+
+mutable bridgeStatusText = "⏳ Waiting for bridge module…"
+mutable componentListText = "(not yet fetched)"
+mutable eventLogText = "(no events yet)"
+mutable eventCount = 0
+mutable calcResultText = "(not yet fetched)"
+```
+
+```{ojs}
+//| label: bridge-run
+//| output: false
+
+// ── Connect and run the round-trip test ──────────────────────────────────────
+{
+  const { createBridge } = await CodapBridgeModule;
+
+  mutable bridgeStatusText = "⏳ Connecting to CODAP bridge plugin…";
+
+  let bridge;
+  try {
+    bridge = await createBridge({
+      timeout: 8000,
+      handshakeTimeout: 12000,
+    });
+  } catch (err) {
+    mutable bridgeStatusText = `❌ Connection failed:\n${err.message}\n\nCheck that:\n  • CODAP is running on localhost:8081\n  • Plugin is served on localhost:8080\n  • The plugin has finished initializing in CODAP`;
+    return;
+  }
+
+  mutable bridgeStatusText = "✅ Connected to CODAP bridge plugin";
+
+  // ── Round-trip: get componentList ─────────────────────────────────────────
+  // This is the safest first resource to read — always exists in any CODAP doc.
+  // Once you know your calculator component name, swap in:
+  //   bridge.get("component[YOUR_CALC_NAME]")
+// ── Round-trip: get componentList ────────────────────────────────────────
+  try {
+    mutable bridgeStatusText = "✅ Connected — fetching componentList…";
+    const result = await bridge.get("componentList");
+    console.log("[diag] componentList raw:", JSON.stringify(result, null, 2));
+    mutable componentListText = JSON.stringify(result, null, 2);
+    mutable bridgeStatusText = `✅ Round-trip complete — ${Array.isArray(result) ? result.length : "?"} component(s) found`;
+
+    // ── Targeted Calculator read (uses same result, no extra request) ───────
+    const ids = Array.isArray(result) ? result : (result?.values ?? []);
+    console.log("[diag] component ids/types:", ids);
+    // Once you see the id in the console, swap in: bridge.get(`component[${id}]`)
+
+  } catch (err) {
+    mutable componentListText = `Error: ${err.message}`;
+    mutable bridgeStatusText = `⚠️ Connected but get() failed:\n${err.message}`;
+  }
+  
+  // ── Subscribe to live CODAP events ────────────────────────────────────────
+  bridge.subscribe((payload) => {
+    mutable eventCount = eventCount + 1;
+    const line = `[${new Date().toLocaleTimeString()}] #${eventCount} ${payload?.eventType ?? "unknown"}: ${JSON.stringify(payload).slice(0, 120)}`;
+    console.log("[quarto-bridge] event:", payload);
+    mutable eventLogText = line + "\n" + eventLogText;
+  });
+}
+```
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     NOTES FOR STEP 2
+     ═══════════════════════════════════════════════════════════════════════ -->
+
+## Next Steps
+
+Once the round-trip above works:
+
+1. **Find your calculator component name** — look at the `componentList` output above. Find the entry with `"type": "Calculator"` and note its `name` or `id`.
+2. **Swap in a targeted get:**
+   ```js
+   bridge.get("component[YOUR_CALC_NAME]")
+   ```
+3. **Wire up a reactive OJS cell** — use `bridge.observable("component[NAME]", "poll")` to get a value that updates automatically.
+4. **Inline display** — once you have a reactive value, you can reference it in Quarto markdown with an OJS inline expression: `${calcValue}`.

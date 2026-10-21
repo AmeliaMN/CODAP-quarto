@@ -1,0 +1,14 @@
+{
+  "name": "test-doc",
+  "components": [
+    {
+      "type": "DG.Calculator",
+      "componentStorage": {
+        "name": "Calculator",
+        "title": "Calculator"
+      }
+    }
+  ],
+  "contexts": [],
+  "globalValues": []
+}
